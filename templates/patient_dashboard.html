@@ -321,4 +321,74 @@
         </div>
     </div>
 </div>
+
+<script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+<script>
+// SocketIO for real-time appointment notifications
+const socket = io();
+
+socket.on('connect', function() {
+    console.log('Connected to notification service');
+});
+
+socket.on('appointment_accepted', function(data) {
+    // Show browser notification
+    if (Notification.permission === 'granted') {
+        new Notification('Appointment Accepted', {
+            body: `Your appointment on ${data.date} at ${data.time} has been accepted by ${data.provider_name}`,
+            icon: '/static/images/logo.png'
+        });
+    }
+    
+    // Show in-page notification
+    showNotification(`Your appointment on ${data.date} at ${data.time} has been accepted by ${data.provider_name}`, 'success');
+    
+    // Reload page to update appointment status
+    setTimeout(() => location.reload(), 2000);
+});
+
+socket.on('appointment_rejected', function(data) {
+    // Show browser notification
+    if (Notification.permission === 'granted') {
+        new Notification('Appointment Rejected', {
+            body: `Your appointment on ${data.date} at ${data.time} was rejected${data.reason ? ': ' + data.reason : ''}`,
+            icon: '/static/images/logo.png'
+        });
+    }
+    
+    // Show in-page notification
+    const message = data.reason 
+        ? `Your appointment on ${data.date} at ${data.time} was rejected. Reason: ${data.reason}`
+        : `Your appointment on ${data.date} at ${data.time} was rejected`;
+    showNotification(message, 'warning');
+    
+    // Reload page to update appointment status
+    setTimeout(() => location.reload(), 3000);
+});
+
+function showNotification(message, type) {
+    const notification = document.createElement('div');
+    notification.className = `fixed top-4 right-4 px-6 py-4 rounded-lg shadow-lg z-50 max-w-md ${
+        type === 'success' ? 'bg-green-500' : 
+        type === 'warning' ? 'bg-yellow-500' : 
+        'bg-blue-500'
+    } text-white`;
+    notification.innerHTML = `
+        <div class="flex items-start">
+            <i class="fas fa-${type === 'success' ? 'check-circle' : type === 'warning' ? 'exclamation-triangle' : 'info-circle'} mr-3 mt-1"></i>
+            <div>${message}</div>
+        </div>
+    `;
+    document.body.appendChild(notification);
+    
+    setTimeout(() => {
+        notification.remove();
+    }, 5000);
+}
+
+// Request notification permission
+if (Notification.permission === 'default') {
+    Notification.requestPermission();
+}
+</script>
 {% endblock %}

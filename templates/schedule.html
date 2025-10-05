@@ -32,6 +32,18 @@
                 </div>
             </div>
             
+            {% if providers %}
+            <div>
+                <label for="provider_id" class="block text-gray-700 font-medium mb-2">Preferred Provider (optional)</label>
+                <select id="provider_id" name="provider_id" class="input-field">
+                    <option value="">No preference</option>
+                    {% for p in providers %}
+                        <option value="{{ p.id }}">{{ p.name|e }} ({{ p.institution or 'N/A' }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% endif %}
+
             <div>
                 <label for="appointment-type" class="block text-gray-700 font-medium mb-2">Appointment Type</label>
                 <select id="appointment-type" name="appointment_type" class="input-field" required>
