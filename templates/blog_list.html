@@ -136,7 +136,8 @@
                                    class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
                                     <i class="fas fa-edit mr-2"></i>Edit
                                 </a>
-                                <button onclick="confirmDelete('{{ post.id }}', {{ post.title|tojson }})"
+                                <button onclick="confirmDelete('{{ post.id }}', this.dataset.title)"
+                                        data-title="{{ post.title }}"
                                         class="block w-full text-left px-4 py-2 text-sm text-red-700 hover:bg-red-50">
                                     <i class="fas fa-trash mr-2"></i>Delete
                                 </button>
@@ -184,6 +185,15 @@
 </div>
 
 <script>
+// Ensure modal is hidden on page load
+document.addEventListener('DOMContentLoaded', function() {
+    const deleteModal = document.getElementById('deleteModal');
+    if (deleteModal) {
+        deleteModal.classList.add('hidden');
+        console.log('Delete modal hidden on page load');
+    }
+});
+
 function toggleDropdown(postId) {
     const dropdown = document.getElementById(`dropdown-${postId}`);
     // Hide all other dropdowns
@@ -194,12 +204,14 @@ function toggleDropdown(postId) {
 }
 
 function confirmDelete(postId, title) {
+    console.log('Confirm delete called for post:', postId);
     document.getElementById('deletePostTitle').textContent = title;
     document.getElementById('deleteForm').action = `/blog/${postId}/delete`;
     document.getElementById('deleteModal').classList.remove('hidden');
 }
 
 function hideDeleteModal() {
+    console.log('Hiding delete modal');
     document.getElementById('deleteModal').classList.add('hidden');
 }
 
@@ -209,6 +221,14 @@ document.addEventListener('click', function(e) {
         document.querySelectorAll('[id^="dropdown-"]').forEach(d => {
             d.classList.add('hidden');
         });
+    }
+});
+
+// Close modal when clicking outside of it
+document.addEventListener('click', function(e) {
+    const deleteModal = document.getElementById('deleteModal');
+    if (e.target === deleteModal) {
+        hideDeleteModal();
     }
 });
 </script>

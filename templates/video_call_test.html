@@ -1,0 +1,337 @@
+{% extends "base.html" %}
+
+{% block title %}Video Call Test - MindFull Horizon{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-gray-100 py-8">
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="bg-white rounded-lg shadow-sm p-6">
+            <h1 class="text-2xl font-bold mb-6">Video Call System Test</h1>
+            
+            <!-- Test Results -->
+            <div id="testResults" class="space-y-4 mb-6">
+                <div class="text-center py-4">
+                    <i class="fas fa-spinner fa-spin text-2xl text-blue-500 mb-2"></i>
+                    <p>Running video call tests...</p>
+                </div>
+            </div>
+            
+            <!-- Manual Test Buttons -->
+            <div class="border-t pt-6">
+                <h3 class="text-lg font-semibold mb-4">Manual Tests</h3>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <button onclick="testGetProviders()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-3 rounded-lg">
+                        <i class="fas fa-user-md mr-2"></i>Test Get Providers
+                    </button>
+                    <button onclick="testVideoCallModal()" class="bg-green-600 hover:bg-green-700 text-white px-4 py-3 rounded-lg">
+                        <i class="fas fa-video mr-2"></i>Test Video Call Modal
+                    </button>
+                    <button onclick="testCallHistory()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-3 rounded-lg">
+                        <i class="fas fa-history mr-2"></i>Test Call History
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Debug Console -->
+            <div class="border-t pt-6 mt-6">
+                <h3 class="text-lg font-semibold mb-4">Debug Console</h3>
+                <div id="debugConsole" class="bg-gray-900 text-green-400 p-4 rounded-lg font-mono text-sm h-64 overflow-y-auto">
+                    <div>Video Call Debug Console Ready...</div>
+                </div>
+                <button onclick="clearDebugConsole()" class="mt-2 bg-gray-600 hover:bg-gray-700 text-white px-3 py-1 rounded text-sm">
+                    Clear Console
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let debugConsole = null;
+
+document.addEventListener('DOMContentLoaded', () => {
+    debugConsole = document.getElementById('debugConsole');
+    runAutomaticTests();
+});
+
+function log(message) {
+    const timestamp = new Date().toLocaleTimeString();
+    debugConsole.innerHTML += `<div>[${timestamp}] ${message}</div>`;
+    debugConsole.scrollTop = debugConsole.scrollHeight;
+}
+
+function clearDebugConsole() {
+    debugConsole.innerHTML = '<div>Video Call Debug Console Ready...</div>';
+}
+
+async function runAutomaticTests() {
+    const testResults = document.getElementById('testResults');
+    const tests = [];
+    
+    log('Starting automatic video call tests...');
+    
+    // Test 1: Check if user is logged in
+    try {
+        const response = await fetch('/test-video-call');
+        const data = await response.json();
+        
+        if (data.success) {
+            tests.push({
+                name: 'User Authentication',
+                status: 'PASS',
+                message: `Logged in as ${data.data.user_role} (ID: ${data.data.user_id})`
+            });
+            log(`✓ User authenticated: ${data.data.user_role}`);
+        } else {
+            tests.push({
+                name: 'User Authentication',
+                status: 'FAIL',
+                message: 'User not authenticated'
+            });
+            log('✗ User authentication failed');
+        }
+    } catch (error) {
+        tests.push({
+            name: 'User Authentication',
+            status: 'FAIL',
+            message: `Error: ${error.message}`
+        });
+        log(`✗ Authentication test error: ${error.message}`);
+    }
+    
+    // Test 2: Get Providers
+    try {
+        log('Testing provider endpoint...');
+        const response = await fetch('/get-providers');
+        const data = await response.json();
+        
+        if (data.success && data.providers) {
+            tests.push({
+                name: 'Provider Endpoint',
+                status: 'PASS',
+                message: `Found ${data.providers.length} providers`
+            });
+            log(`✓ Found ${data.providers.length} providers`);
+            
+            // Log provider details
+            data.providers.forEach(provider => {
+                log(`  - ${provider.name} (ID: ${provider.id}, Institution: ${provider.institution})`);
+            });
+        } else {
+            tests.push({
+                name: 'Provider Endpoint',
+                status: 'FAIL',
+                message: 'No providers found or endpoint failed'
+            });
+            log('✗ No providers found');
+        }
+    } catch (error) {
+        tests.push({
+            name: 'Provider Endpoint',
+            status: 'FAIL',
+            message: `Error: ${error.message}`
+        });
+        log(`✗ Provider endpoint error: ${error.message}`);
+    }
+    
+    // Test 3: WebRTC Support
+    if (window.RTCPeerConnection) {
+        tests.push({
+            name: 'WebRTC Support',
+            status: 'PASS',
+            message: 'WebRTC is supported in this browser'
+        });
+        log('✓ WebRTC supported');
+    } else {
+        tests.push({
+            name: 'WebRTC Support',
+            status: 'FAIL',
+            message: 'WebRTC is not supported in this browser'
+        });
+        log('✗ WebRTC not supported');
+    }
+    
+    // Test 4: Media Devices
+    try {
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            tests.push({
+                name: 'Media Devices API',
+                status: 'PASS',
+                message: 'Media devices API is available'
+            });
+            log('✓ Media devices API available');
+        } else {
+            tests.push({
+                name: 'Media Devices API',
+                status: 'FAIL',
+                message: 'Media devices API is not available'
+            });
+            log('✗ Media devices API not available');
+        }
+    } catch (error) {
+        tests.push({
+            name: 'Media Devices API',
+            status: 'FAIL',
+            message: `Error: ${error.message}`
+        });
+        log(`✗ Media devices API error: ${error.message}`);
+    }
+    
+    // Display results
+    testResults.innerHTML = tests.map(test => `
+        <div class="flex items-center justify-between p-4 border rounded-lg ${test.status === 'PASS' ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'}">
+            <div class="flex items-center">
+                <i class="fas fa-${test.status === 'PASS' ? 'check-circle text-green-600' : 'times-circle text-red-600'} text-xl mr-3"></i>
+                <div>
+                    <h4 class="font-medium">${test.name}</h4>
+                    <p class="text-sm text-gray-600">${test.message}</p>
+                </div>
+            </div>
+            <span class="px-3 py-1 text-sm font-medium rounded-full ${test.status === 'PASS' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
+                ${test.status}
+            </span>
+        </div>
+    `).join('');
+    
+    log('Automatic tests completed');
+}
+
+async function testGetProviders() {
+    log('Manual test: Get Providers');
+    try {
+        const response = await fetch('/get-providers');
+        const data = await response.json();
+        log(`Response: ${JSON.stringify(data, null, 2)}`);
+        
+        if (data.success) {
+            alert(`✅ Found ${data.providers.length} providers:\n${data.providers.map(p => `• ${p.name} (${p.institution})`).join('\n')}`);
+        } else {
+            alert('❌ Failed to get providers');
+        }
+    } catch (error) {
+        log(`Error: ${error.message}`);
+        alert(`❌ Error: ${error.message}`);
+    }
+}
+
+function testVideoCallModal() {
+    log('Manual test: Video Call Modal');
+    
+    // Create a test modal similar to the one in patient dashboard
+    const modalHTML = `
+        <div id="testProviderModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div class="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-xl font-semibold">Test Provider Selection</h3>
+                    <button onclick="closeTestModal()" class="text-gray-400 hover:text-gray-600">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div id="testProvidersList" class="space-y-3 max-h-60 overflow-y-auto">
+                    <div class="text-center py-4">
+                        <i class="fas fa-spinner fa-spin text-2xl text-blue-500 mb-2"></i>
+                        <p>Loading providers...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
+    loadTestProviders();
+}
+
+async function loadTestProviders() {
+    try {
+        log('Loading providers for test modal...');
+        const response = await fetch('/get-providers');
+        const data = await response.json();
+        
+        const providersList = document.getElementById('testProvidersList');
+        
+        if (data.success && data.providers.length > 0) {
+            providersList.innerHTML = data.providers.map(provider => `
+                <div class="border border-gray-200 rounded-lg p-4 hover:bg-gray-50 cursor-pointer" onclick="testInitiateCall(${provider.id}, '${provider.name}')">
+                    <div class="flex items-center">
+                        <div class="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center text-white font-semibold mr-3">
+                            ${provider.name.charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                            <h4 class="font-medium">${provider.name}</h4>
+                            <p class="text-sm text-gray-600">${provider.specialization}</p>
+                            <p class="text-xs text-gray-500">${provider.institution}</p>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+            log(`Loaded ${data.providers.length} providers in test modal`);
+        } else {
+            providersList.innerHTML = '<div class="text-center py-4 text-gray-500">No providers available</div>';
+            log('No providers available for test modal');
+        }
+    } catch (error) {
+        log(`Error loading test providers: ${error.message}`);
+        document.getElementById('testProvidersList').innerHTML = `<div class="text-center py-4 text-red-500">Error: ${error.message}</div>`;
+    }
+}
+
+function closeTestModal() {
+    const modal = document.getElementById('testProviderModal');
+    if (modal) {
+        modal.remove();
+    }
+}
+
+async function testInitiateCall(providerId, providerName) {
+    log(`Testing call initiation with provider ${providerId} (${providerName})`);
+    closeTestModal();
+    
+    try {
+        const response = await fetch('/initiate-call', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                provider_id: parseInt(providerId)
+            })
+        });
+        
+        const data = await response.json();
+        log(`Call initiation response: ${JSON.stringify(data, null, 2)}`);
+        
+        if (data.success) {
+            alert(`✅ Call initiated successfully!\nCall ID: ${data.call_id}\n\nWould you like to go to the video call page?`);
+            if (confirm('Go to video call page?')) {
+                window.location.href = `/video-call?call_id=${data.call_id}`;
+            }
+        } else {
+            alert(`❌ Call initiation failed: ${data.message}`);
+        }
+    } catch (error) {
+        log(`Call initiation error: ${error.message}`);
+        alert(`❌ Error: ${error.message}`);
+    }
+}
+
+async function testCallHistory() {
+    log('Manual test: Call History');
+    try {
+        const response = await fetch('/call-history-api');
+        const data = await response.json();
+        log(`Call history response: ${JSON.stringify(data, null, 2)}`);
+        
+        if (data.success) {
+            alert(`✅ Call history loaded successfully!\nTotal calls: ${data.calls.length}`);
+        } else {
+            alert('❌ Failed to load call history');
+        }
+    } catch (error) {
+        log(`Call history error: ${error.message}`);
+        alert(`❌ Error: ${error.message}`);
+    }
+}
+</script>
+{% endblock %}

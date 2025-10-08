@@ -683,6 +683,137 @@ socket.on('new_appointment', function(data) {
     window.loadAppointments();
 });
 
+// Handle incoming video call notifications
+socket.on('incoming_call', function(data) {
+    console.log('Incoming video call:', data);
+    showIncomingCallModal(data);
+    
+    // Show browser notification
+    if (Notification.permission === 'granted') {
+        new Notification('📹 Incoming Video Call', {
+            body: `${data.patient_name} is calling you`,
+            icon: '/static/images/icon-192x192.png',
+            requireInteraction: true
+        });
+    }
+    
+    // Play notification sound (if available)
+    playNotificationSound();
+});
+
+function showIncomingCallModal(callData) {
+    // Remove any existing call modal
+    const existingModal = document.getElementById('incomingCallModal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+    
+    const modalHTML = `
+        <div id="incomingCallModal" class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+            <div class="bg-white rounded-lg p-8 max-w-md w-full mx-4 text-center">
+                <div class="mb-6">
+                    <div class="w-20 h-20 bg-blue-500 rounded-full flex items-center justify-center text-white text-2xl font-bold mx-auto mb-4">
+                        ${callData.patient_name.charAt(0).toUpperCase()}
+                    </div>
+                    <h3 class="text-xl font-semibold mb-2">Incoming Video Call</h3>
+                    <p class="text-gray-600">${callData.patient_name}</p>
+                    <p class="text-sm text-gray-500">${callData.patient_email}</p>
+                </div>
+                
+                <div class="flex justify-center space-x-4">
+                    <button onclick="answerCall('${callData.call_id}')" class="bg-green-500 hover:bg-green-600 text-white px-6 py-3 rounded-full flex items-center space-x-2 transition-colors">
+                        <i class="fas fa-phone"></i>
+                        <span>Answer</span>
+                    </button>
+                    <button onclick="rejectCall('${callData.call_id}')" class="bg-red-500 hover:bg-red-600 text-white px-6 py-3 rounded-full flex items-center space-x-2 transition-colors">
+                        <i class="fas fa-phone-slash"></i>
+                        <span>Decline</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
+    
+    // Auto-reject after 30 seconds
+    setTimeout(() => {
+        const modal = document.getElementById('incomingCallModal');
+        if (modal) {
+            rejectCall(callData.call_id);
+        }
+    }, 30000);
+}
+
+async function answerCall(callId) {
+    try {
+        const response = await fetch('/answer-call', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                call_id: callId
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            // Close modal and redirect to video call
+            document.getElementById('incomingCallModal').remove();
+            window.location.href = data.redirect_url;
+        } else {
+            showNotification('Error', data.message || 'Failed to answer call', 'error');
+        }
+    } catch (error) {
+        console.error('Error answering call:', error);
+        showNotification('Error', 'Failed to answer call', 'error');
+    }
+}
+
+async function rejectCall(callId) {
+    try {
+        const response = await fetch('/reject-call', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                call_id: callId
+            })
+        });
+        
+        const data = await response.json();
+        
+        // Close modal
+        const modal = document.getElementById('incomingCallModal');
+        if (modal) {
+            modal.remove();
+        }
+        
+        if (data.success) {
+            showNotification('Call Declined', 'You declined the video call', 'info');
+        } else {
+            showNotification('Error', data.message || 'Failed to reject call', 'error');
+        }
+    } catch (error) {
+        console.error('Error rejecting call:', error);
+        showNotification('Error', 'Failed to reject call', 'error');
+    }
+}
+
+function playNotificationSound() {
+    // Create audio element for call notification
+    try {
+        const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSuBzvLZiTYIG2m98OScTgwOUarm7blqIAU8k9n1unEiBC13yO/eizEIHWq+8+OWT');
+        audio.volume = 0.3;
+        audio.play().catch(e => console.log('Could not play notification sound'));
+    } catch (e) {
+        console.log('Could not create notification sound');
+    }
+}
+
 function showInPageNotification(appointmentData) {
     // Create a temporary notification banner
     const notification = document.createElement('div');

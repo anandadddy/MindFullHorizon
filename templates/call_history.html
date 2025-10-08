@@ -1,0 +1,308 @@
+{% extends "base.html" %}
+
+{% block title %}Call History - MindFull Horizon{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-gray-100 py-8">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <!-- Header -->
+        <div class="mb-8">
+            <div class="flex justify-between items-center">
+                <div>
+                    <h1 class="text-3xl font-bold text-gray-900">Call History</h1>
+                    <p class="text-gray-600 mt-2">View your past video consultations</p>
+                </div>
+                <a href="{{ url_for('dashboard') }}" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors">
+                    <i class="fas fa-arrow-left mr-2"></i>Back to Dashboard
+                </a>
+            </div>
+        </div>
+
+        <!-- Call Statistics -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+            <div class="bg-white rounded-lg shadow-sm p-6">
+                <div class="flex items-center">
+                    <div class="bg-blue-100 rounded-full p-3 mr-4">
+                        <i class="fas fa-video text-blue-600 text-xl"></i>
+                    </div>
+                    <div>
+                        <p class="text-sm text-gray-600">Total Calls</p>
+                        <p id="totalCalls" class="text-2xl font-bold text-gray-900">{{ calls|length }}</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="bg-white rounded-lg shadow-sm p-6">
+                <div class="flex items-center">
+                    <div class="bg-green-100 rounded-full p-3 mr-4">
+                        <i class="fas fa-check-circle text-green-600 text-xl"></i>
+                    </div>
+                    <div>
+                        <p class="text-sm text-gray-600">Completed</p>
+                        <p id="completedCalls" class="text-2xl font-bold text-gray-900">
+                            {{ calls|selectattr('is_completed')|list|length }}
+                        </p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="bg-white rounded-lg shadow-sm p-6">
+                <div class="flex items-center">
+                    <div class="bg-yellow-100 rounded-full p-3 mr-4">
+                        <i class="fas fa-clock text-yellow-600 text-xl"></i>
+                    </div>
+                    <div>
+                        <p class="text-sm text-gray-600">Total Duration</p>
+                        <p id="totalDuration" class="text-2xl font-bold text-gray-900">
+                            {% set total_seconds = calls|selectattr('duration_seconds')|map(attribute='duration_seconds')|sum %}
+                            {% if total_seconds %}
+                                {{ (total_seconds // 60) }}:{{ (total_seconds % 60)|string|rjust(2, '0') }}
+                            {% else %}
+                                0:00
+                            {% endif %}
+                        </p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="bg-white rounded-lg shadow-sm p-6">
+                <div class="flex items-center">
+                    <div class="bg-purple-100 rounded-full p-3 mr-4">
+                        <i class="fas fa-calendar text-purple-600 text-xl"></i>
+                    </div>
+                    <div>
+                        <p class="text-sm text-gray-600">This Month</p>
+                        <p id="thisMonthCalls" class="text-2xl font-bold text-gray-900">
+                            {% set this_month = calls|selectattr('initiated_at')|list %}
+                            {{ this_month|length }}
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Filters -->
+        <div class="bg-white rounded-lg shadow-sm p-6 mb-6">
+            <div class="flex flex-wrap gap-4 items-center">
+                <div>
+                    <label class="text-sm font-medium text-gray-700 mr-2">Filter by Status:</label>
+                    <select id="statusFilter" class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                        <option value="all">All Calls</option>
+                        <option value="completed">Completed</option>
+                        <option value="answered">Answered</option>
+                        <option value="rejected">Rejected</option>
+                        <option value="initiated">Initiated</option>
+                    </select>
+                </div>
+                
+                <div>
+                    <label class="text-sm font-medium text-gray-700 mr-2">Date Range:</label>
+                    <select id="dateFilter" class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                        <option value="all">All Time</option>
+                        <option value="today">Today</option>
+                        <option value="week">This Week</option>
+                        <option value="month">This Month</option>
+                        <option value="quarter">Last 3 Months</option>
+                    </select>
+                </div>
+                
+                <button id="refreshBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm transition-colors">
+                    <i class="fas fa-sync-alt mr-2"></i>Refresh
+                </button>
+            </div>
+        </div>
+
+        <!-- Call History Table -->
+        <div class="bg-white rounded-lg shadow-sm overflow-hidden">
+            <div class="px-6 py-4 border-b border-gray-200">
+                <h3 class="text-lg font-semibold text-gray-900">Recent Calls</h3>
+            </div>
+            
+            <div class="overflow-x-auto">
+                <table class="w-full">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                {% if user_role == 'patient' %}Provider{% else %}Patient{% endif %}
+                            </th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date & Time</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Duration</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Quality</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="callHistoryBody" class="bg-white divide-y divide-gray-200">
+                        {% for call in calls %}
+                        <tr class="hover:bg-gray-50 call-row" data-status="{{ call.status }}" data-date="{{ call.initiated_at }}">
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <div class="flex items-center">
+                                    <div class="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center text-white font-semibold mr-3">
+                                        {% if user_role == 'patient' %}
+                                            {{ call.provider_name[0] if call.provider_name else 'P' }}
+                                        {% else %}
+                                            {{ call.patient_name[0] if call.patient_name else 'P' }}
+                                        {% endif %}
+                                    </div>
+                                    <div>
+                                        <div class="text-sm font-medium text-gray-900">
+                                            {% if user_role == 'patient' %}
+                                                {{ call.provider_name or 'Unknown Provider' }}
+                                            {% else %}
+                                                {{ call.patient_name or 'Unknown Patient' }}
+                                            {% endif %}
+                                        </div>
+                                        <div class="text-sm text-gray-500">
+                                            {% if user_role == 'patient' %}Mental Health Provider{% else %}Patient{% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <div class="text-sm text-gray-900">
+                                    {% if call.initiated_at %}
+                                        {{ call.initiated_at[:10] }}
+                                    {% else %}
+                                        N/A
+                                    {% endif %}
+                                </div>
+                                <div class="text-sm text-gray-500">
+                                    {% if call.initiated_at and call.initiated_at|length > 16 %}
+                                        {{ call.initiated_at[11:16] }}
+                                    {% else %}
+                                        N/A
+                                    {% endif %}
+                                </div>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <div class="text-sm text-gray-900">
+                                    {{ call.duration_formatted if call.duration_formatted != '0:00' else 'N/A' }}
+                                </div>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <span class="inline-flex px-2 py-1 text-xs font-semibold rounded-full
+                                    {% if call.status == 'ended' %}bg-green-100 text-green-800
+                                    {% elif call.status == 'answered' %}bg-blue-100 text-blue-800
+                                    {% elif call.status == 'rejected' %}bg-red-100 text-red-800
+                                    {% elif call.status == 'initiated' %}bg-yellow-100 text-yellow-800
+                                    {% else %}bg-gray-100 text-gray-800{% endif %}">
+                                    {{ call.status.title() }}
+                                </span>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                {% if call.connection_quality %}
+                                <div class="flex items-center">
+                                    <div class="w-2 h-2 rounded-full mr-2
+                                        {% if call.connection_quality == 'excellent' %}bg-green-500
+                                        {% elif call.connection_quality == 'good' %}bg-blue-500
+                                        {% elif call.connection_quality == 'fair' %}bg-yellow-500
+                                        {% else %}bg-red-500{% endif %}">
+                                    </div>
+                                    <span class="text-sm text-gray-900">{{ call.connection_quality.title() }}</span>
+                                </div>
+                                {% else %}
+                                <span class="text-sm text-gray-500">N/A</span>
+                                {% endif %}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                <div class="flex space-x-2">
+                                    {% if call.status == 'ended' and call.is_completed %}
+                                    <button onclick="viewCallDetails('{{ call.call_id }}')" class="text-blue-600 hover:text-blue-900">
+                                        <i class="fas fa-eye"></i>
+                                    </button>
+                                    {% endif %}
+                                    {% if user_role == 'provider' and call.status == 'ended' %}
+                                    <button onclick="addNotes('{{ call.call_id }}')" class="text-green-600 hover:text-green-900">
+                                        <i class="fas fa-notes-medical"></i>
+                                    </button>
+                                    {% endif %}
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        
+                        {% if not calls %}
+                        <tr>
+                            <td colspan="6" class="px-6 py-12 text-center text-gray-500">
+                                <i class="fas fa-video text-4xl mb-4 opacity-50"></i>
+                                <p class="text-lg">No video calls yet</p>
+                                <p class="text-sm">Your call history will appear here once you start making video calls</p>
+                            </td>
+                        </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Filter functionality
+document.getElementById('statusFilter').addEventListener('change', filterCalls);
+document.getElementById('dateFilter').addEventListener('change', filterCalls);
+document.getElementById('refreshBtn').addEventListener('click', refreshCallHistory);
+
+function filterCalls() {
+    const statusFilter = document.getElementById('statusFilter').value;
+    const dateFilter = document.getElementById('dateFilter').value;
+    const rows = document.querySelectorAll('.call-row');
+    
+    rows.forEach(row => {
+        let showRow = true;
+        
+        // Status filter
+        if (statusFilter !== 'all') {
+            const rowStatus = row.dataset.status;
+            if (statusFilter === 'completed' && rowStatus !== 'ended') {
+                showRow = false;
+            } else if (statusFilter !== 'completed' && rowStatus !== statusFilter) {
+                showRow = false;
+            }
+        }
+        
+        // Date filter
+        if (dateFilter !== 'all' && showRow) {
+            const rowDate = new Date(row.dataset.date);
+            const now = new Date();
+            const diffTime = now - rowDate;
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            
+            switch (dateFilter) {
+                case 'today':
+                    if (diffDays > 1) showRow = false;
+                    break;
+                case 'week':
+                    if (diffDays > 7) showRow = false;
+                    break;
+                case 'month':
+                    if (diffDays > 30) showRow = false;
+                    break;
+                case 'quarter':
+                    if (diffDays > 90) showRow = false;
+                    break;
+            }
+        }
+        
+        row.style.display = showRow ? '' : 'none';
+    });
+}
+
+function refreshCallHistory() {
+    // Show loading state
+    const refreshBtn = document.getElementById('refreshBtn');
+    const originalText = refreshBtn.innerHTML;
+    refreshBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Loading...';
+    refreshBtn.disabled = true;
+    
+    // Reload after a short delay to show the loading state
+    setTimeout(() => {
+        location.reload();
+    }, 500);
+}
+
+</script>
+{% endblock %}

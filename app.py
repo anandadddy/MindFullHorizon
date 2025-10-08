@@ -24,7 +24,7 @@ from flask_caching import Cache
 
 from ai_service import ai_service
 from extensions import db, migrate, flask_session, compress, csrf
-from models import User, Assessment, DigitalDetoxLog, RPMData, Gamification, ClinicalNote, InstitutionalAnalytics, Appointment, Goal, Medication, MedicationLog, BreathingExerciseLog, YogaLog, MusicTherapyLog, ProgressRecommendation, get_user_wellness_trend, get_institutional_summary, Notification
+from models import User, Assessment, DigitalDetoxLog, RPMData, Gamification, ClinicalNote, InstitutionalAnalytics, Appointment, Goal, Medication, MedicationLog, BreathingExerciseLog, YogaLog, MusicTherapyLog, ProgressRecommendation, get_user_wellness_trend, get_institutional_summary, Notification, VideoCall
 from models import BlogPost, BlogComment, BlogLike, BlogInsight, Prescription  # Ensure BlogPost and related models are imported
 
 # Add this function before the route definitions to help standardize college names
@@ -610,6 +610,19 @@ def patient_dashboard():
                          alerts=alerts,
                          upcoming_appointments=upcoming_appointments,
                          past_appointments=past_appointments)
+
+@app.route('/dashboard')
+@login_required
+def dashboard():
+    """Unified dashboard route that redirects based on user role"""
+    user_role = session.get('user_role')
+    if user_role == 'patient':
+        return redirect(url_for('patient_dashboard'))
+    elif user_role == 'provider':
+        return redirect(url_for('provider_dashboard'))
+    else:
+        flash('Invalid user role', 'error')
+        return redirect(url_for('index'))
 
 @app.route('/provider-dashboard')
 @login_required
@@ -1331,6 +1344,373 @@ def telehealth_session(user_id):
 @login_required
 def telehealth():
     return render_template('telehealth.html', user_name=session['user_name'])
+
+# --- Video Call Routes ---
+@app.route('/video-call')
+@login_required
+def video_call():
+    """Video call interface"""
+    call_id = request.args.get('call_id')
+    if not call_id:
+        flash('Invalid call ID', 'error')
+        return redirect(url_for('dashboard'))
+    
+    return render_template('video_call.html', call_id=call_id)
+
+@app.route('/initiate-call', methods=['POST'])
+@login_required
+def initiate_call():
+    """Initiate a video call with a provider"""
+    try:
+        data = request.get_json()
+        provider_id = data.get('provider_id')
+        
+        if not provider_id:
+            return jsonify({'success': False, 'message': 'Provider ID required'}), 400
+        
+        # Check if provider exists
+        provider = User.query.filter_by(id=provider_id, role='provider').first()
+        if not provider:
+            return jsonify({'success': False, 'message': 'Provider not found'}), 404
+        
+        # Generate unique call ID
+        call_id = str(uuid.uuid4())
+        
+        # Create VideoCall record
+        video_call = VideoCall(
+            call_id=call_id,
+            patient_id=session['user_id'],
+            provider_id=provider_id,
+            status='initiated'
+        )
+        
+        db.session.add(video_call)
+        db.session.commit()
+        
+        # Notify provider about incoming call
+        socketio.emit('incoming_call', {
+            'call_id': call_id,
+            'patient_id': session['user_id'],
+            'patient_name': session['user_name'],
+            'patient_email': session['user_email']
+        }, room=f"user_{provider_id}")
+        
+        # Set up call timeout (30 seconds)
+        def timeout_call():
+            try:
+                # Check if call is still pending
+                call_check = VideoCall.query.filter_by(call_id=call_id).first()
+                if call_check and call_check.status == 'initiated':
+                    call_check.status = 'timeout'
+                    call_check.ended_at = datetime.utcnow()
+                    call_check.ended_by = 'system'
+                    call_check.end_reason = 'timeout'
+                    db.session.commit()
+                    
+                    # Notify patient about timeout
+                    socketio.emit('call_timeout', {
+                        'call_id': call_id,
+                        'message': 'Call timed out - provider did not answer'
+                    }, room=f"user_{session['user_id']}")
+                    
+            except Exception as e:
+                logger.error(f"Error in call timeout: {e}")
+        
+        # Schedule timeout after 30 seconds
+        import threading
+        timer = threading.Timer(30.0, timeout_call)
+        timer.start()
+        
+        return jsonify({
+            'success': True, 
+            'call_id': call_id,
+            'message': 'Call initiated successfully'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error initiating call: {e}")
+        db.session.rollback()
+        return jsonify({'success': False, 'message': 'Failed to initiate call'}), 500
+
+@app.route('/answer-call', methods=['POST'])
+@login_required
+def answer_call():
+    """Answer an incoming video call"""
+    try:
+        data = request.get_json()
+        call_id = data.get('call_id')
+        
+        if not call_id:
+            return jsonify({'success': False, 'message': 'Call ID required'}), 400
+        
+        # Update VideoCall record
+        video_call = VideoCall.query.filter_by(call_id=call_id).first()
+        if video_call:
+            video_call.status = 'answered'
+            video_call.answered_at = datetime.utcnow()
+            db.session.commit()
+        
+        # Notify patient that call was answered
+        if video_call:
+            call_data = {
+                'call_id': call_id,
+                'provider_id': session['user_id'],
+                'provider_name': session['user_name']
+            }
+            # Send to both user room and call room
+            socketio.emit('call_answered', call_data, room=f"user_{video_call.patient_id}")
+            socketio.emit('call_answered', call_data, room=f"call_{call_id}")
+        
+        return jsonify({
+            'success': True,
+            'message': 'Call answered',
+            'redirect_url': url_for('video_call', call_id=call_id)
+        })
+        
+    except Exception as e:
+        logger.error(f"Error answering call: {e}")
+        db.session.rollback()
+        return jsonify({'success': False, 'message': 'Failed to answer call'}), 500
+
+@app.route('/reject-call', methods=['POST'])
+@login_required
+def reject_call():
+    """Reject an incoming video call"""
+    try:
+        data = request.get_json()
+        call_id = data.get('call_id')
+        
+        if not call_id:
+            return jsonify({'success': False, 'message': 'Call ID required'}), 400
+        
+        # Update VideoCall record
+        video_call = VideoCall.query.filter_by(call_id=call_id).first()
+        if video_call:
+            video_call.status = 'rejected'
+            video_call.ended_at = datetime.utcnow()
+            video_call.ended_by = 'provider'
+            video_call.end_reason = 'rejected_by_provider'
+            db.session.commit()
+        
+        # Notify patient that call was rejected
+        if video_call:
+            call_data = {
+                'call_id': call_id,
+                'provider_id': session['user_id'],
+                'provider_name': session['user_name']
+            }
+            # Send to both user room and call room
+            socketio.emit('call_rejected', call_data, room=f"user_{video_call.patient_id}")
+            socketio.emit('call_rejected', call_data, room=f"call_{call_id}")
+        
+        return jsonify({'success': True, 'message': 'Call rejected'})
+        
+    except Exception as e:
+        logger.error(f"Error rejecting call: {e}")
+        db.session.rollback()
+        return jsonify({'success': False, 'message': 'Failed to reject call'}), 500
+
+@app.route('/get-providers')
+@login_required
+def get_providers():
+    """Get available providers for video calls"""
+    try:
+        # Get current user's institution
+        user_institution = session.get('user_institution')
+        logger.info(f"User institution from session: {user_institution}")
+        
+        # If no institution in session, get from database
+        if not user_institution:
+            current_user = User.query.get(session['user_id'])
+            user_institution = current_user.institution if current_user else 'Haridwar University'
+            session['user_institution'] = user_institution
+            logger.info(f"Updated user institution from database: {user_institution}")
+        
+        # Get providers from the same institution or all providers if no institution match
+        providers = User.query.filter_by(role='provider', institution=user_institution).all()
+        
+        # If no providers found with same institution, get all providers
+        if not providers:
+            providers = User.query.filter_by(role='provider').all()
+            logger.info(f"No providers found for institution '{user_institution}', returning all providers")
+        
+        providers_data = []
+        for provider in providers:
+            providers_data.append({
+                'id': provider.id,
+                'name': provider.name,
+                'email': provider.email,
+                'specialization': getattr(provider, 'specialization', 'Mental Health Provider'),
+                'institution': provider.institution
+            })
+        
+        logger.info(f"Returning {len(providers_data)} providers")
+        
+        return jsonify({
+            'success': True,
+            'providers': providers_data
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting providers: {e}")
+        return jsonify({'success': False, 'message': 'Failed to get providers'}), 500
+
+@app.route('/call-history')
+@login_required
+def call_history():
+    """View call history for the current user"""
+    try:
+        user_id = session['user_id']
+        user_role = session['user_role']
+        
+        # Get calls based on user role
+        if user_role == 'patient':
+            calls = VideoCall.query.filter_by(patient_id=user_id).order_by(VideoCall.initiated_at.desc()).limit(50).all()
+        elif user_role == 'provider':
+            calls = VideoCall.query.filter_by(provider_id=user_id).order_by(VideoCall.initiated_at.desc()).limit(50).all()
+        else:
+            calls = []
+        
+        calls_data = [call.to_dict() for call in calls]
+        
+        return render_template('call_history.html', 
+                             calls=calls_data,
+                             user_role=user_role,
+                             user_name=session['user_name'])
+        
+    except Exception as e:
+        logger.error(f"Error getting call history: {e}")
+        flash('Failed to load call history', 'error')
+        return redirect(url_for('dashboard'))
+
+@app.route('/call-history-api')
+@login_required
+def call_history_api():
+    """API endpoint for call history data"""
+    try:
+        user_id = session['user_id']
+        user_role = session['user_role']
+        
+        # Get calls based on user role
+        if user_role == 'patient':
+            calls = VideoCall.query.filter_by(patient_id=user_id).order_by(VideoCall.initiated_at.desc()).limit(50).all()
+        elif user_role == 'provider':
+            calls = VideoCall.query.filter_by(provider_id=user_id).order_by(VideoCall.initiated_at.desc()).limit(50).all()
+        else:
+            calls = []
+        
+        calls_data = [call.to_dict() for call in calls]
+        
+        return jsonify({
+            'success': True,
+            'calls': calls_data
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting call history: {e}")
+        return jsonify({'success': False, 'message': 'Failed to get call history'}), 500
+
+@app.route('/report-call-quality', methods=['POST'])
+@login_required
+def report_call_quality():
+    """Report call quality metrics"""
+    try:
+        data = request.get_json()
+        call_id = data.get('call_id')
+        audio_quality = data.get('audio_quality')
+        video_quality = data.get('video_quality')
+        
+        if not call_id:
+            return jsonify({'success': False, 'message': 'Call ID required'}), 400
+        
+        # Update VideoCall record with quality metrics
+        video_call = VideoCall.query.filter_by(call_id=call_id).first()
+        if video_call:
+            video_call.audio_quality = audio_quality
+            video_call.video_quality = video_quality
+            
+            # Determine overall connection quality
+            if audio_quality == 'excellent' and video_quality == 'excellent':
+                video_call.connection_quality = 'excellent'
+            elif audio_quality in ['excellent', 'good'] and video_quality in ['excellent', 'good']:
+                video_call.connection_quality = 'good'
+            elif audio_quality in ['excellent', 'good', 'fair'] and video_quality in ['excellent', 'good', 'fair']:
+                video_call.connection_quality = 'fair'
+            else:
+                video_call.connection_quality = 'poor'
+            
+            db.session.commit()
+        
+        return jsonify({'success': True, 'message': 'Quality reported successfully'})
+        
+    except Exception as e:
+        logger.error(f"Error reporting call quality: {e}")
+        db.session.rollback()
+        return jsonify({'success': False, 'message': 'Failed to report quality'}), 500
+
+@app.route('/video-call-status')
+@login_required
+def video_call_status():
+    """Video call system status and testing page"""
+    return render_template('video_call_status.html')
+
+@app.route('/video-call-help')
+@login_required
+def video_call_help():
+    """Video call help and troubleshooting page"""
+    return render_template('video_call_help.html')
+
+@app.route('/video-call-test')
+@login_required
+def video_call_test_page():
+    """Video call testing page"""
+    return render_template('video_call_test.html')
+
+@app.route('/test-video-call')
+@login_required
+def test_video_call():
+    """Test route to verify video call functionality"""
+    try:
+        # Get current user info
+        user_id = session['user_id']
+        user_role = session['user_role']
+        
+        # Test data
+        test_data = {
+            'user_id': user_id,
+            'user_role': user_role,
+            'providers_count': 0,
+            'calls_count': 0,
+            'recent_calls': []
+        }
+        
+        # Count providers
+        if user_role == 'patient':
+            user_institution = session.get('user_institution', 'Sample University')
+            providers = User.query.filter_by(role='provider', institution=user_institution).all()
+            test_data['providers_count'] = len(providers)
+            test_data['providers'] = [{'id': p.id, 'name': p.name, 'email': p.email} for p in providers[:5]]
+        
+        # Count calls
+        if user_role == 'patient':
+            calls = VideoCall.query.filter_by(patient_id=user_id).all()
+        elif user_role == 'provider':
+            calls = VideoCall.query.filter_by(provider_id=user_id).all()
+        else:
+            calls = []
+        
+        test_data['calls_count'] = len(calls)
+        test_data['recent_calls'] = [call.to_dict() for call in calls[-5:]]
+        
+        return jsonify({
+            'success': True,
+            'message': 'Video call system test completed',
+            'data': test_data
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in video call test: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/digital-detox')
 @login_required
@@ -2993,6 +3373,99 @@ def on_leave(data):
     leave_room(room)
     emit('_disconnect', to=room, include_self=False)
     emit('message', f'User has left the room {room}.', to=room)
+
+# --- SocketIO Video Call Handlers ---
+@socketio.on('join_call')
+def on_join_call(data):
+    """Join a video call room"""
+    call_id = data['call_id']
+    room = f"call_{call_id}"
+    join_room(room)
+    
+    emit('user_joined', {
+        'user_id': session['user_id'],
+        'user_name': session['user_name'],
+        'user_role': session['user_role']
+    }, to=room, include_self=False)
+    
+    emit('joined_call', {'call_id': call_id, 'room': room})
+
+@socketio.on('leave_call')
+def on_leave_call(data):
+    """Leave a video call room"""
+    call_id = data['call_id']
+    room = f"call_{call_id}"
+    leave_room(room)
+    
+    emit('user_left', {
+        'user_id': session['user_id'],
+        'user_name': session['user_name']
+    }, to=room)
+
+@socketio.on('call_offer')
+def on_call_offer(data):
+    """Handle WebRTC offer"""
+    call_id = data['call_id']
+    room = f"call_{call_id}"
+    
+    emit('call_offer', {
+        'offer': data['offer'],
+        'from_user': session['user_id']
+    }, to=room, include_self=False)
+
+@socketio.on('call_answer')
+def on_call_answer(data):
+    """Handle WebRTC answer"""
+    call_id = data['call_id']
+    room = f"call_{call_id}"
+    
+    emit('call_answer', {
+        'answer': data['answer'],
+        'from_user': session['user_id']
+    }, to=room, include_self=False)
+
+@socketio.on('ice_candidate')
+def on_ice_candidate(data):
+    """Handle ICE candidates"""
+    call_id = data['call_id']
+    room = f"call_{call_id}"
+    
+    emit('ice_candidate', {
+        'candidate': data['candidate'],
+        'from_user': session['user_id']
+    }, to=room, include_self=False)
+
+@socketio.on('end_call')
+def on_end_call(data):
+    """Handle call termination"""
+    call_id = data['call_id']
+    room = f"call_{call_id}"
+    
+    # Update VideoCall record
+    try:
+        video_call = VideoCall.query.filter_by(call_id=call_id).first()
+        if video_call and video_call.status == 'answered':
+            video_call.status = 'ended'
+            video_call.ended_at = datetime.utcnow()
+            video_call.ended_by = session.get('user_role', 'unknown')
+            video_call.end_reason = 'user_ended'
+            
+            # Calculate duration if call was answered
+            if video_call.answered_at:
+                duration = video_call.ended_at - video_call.answered_at
+                video_call.duration_seconds = int(duration.total_seconds())
+            
+            db.session.commit()
+    except Exception as e:
+        logger.error(f"Error updating call record on end: {e}")
+        db.session.rollback()
+    
+    emit('call_ended', {
+        'ended_by': session['user_id'],
+        'ended_by_name': session['user_name']
+    }, to=room, include_self=False)
+    
+    leave_room(room)
 
 # Google OAuth Configuration
 app.config["GOOGLE_OAUTH_CLIENT_ID"] = os.environ.get("GOOGLE_OAUTH_CLIENT_ID")

@@ -1,0 +1,247 @@
+{% extends "base.html" %}
+
+{% block title %}Video Call Help - MindFull Horizon{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-gray-100 py-8">
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+        <!-- Header -->
+        <div class="mb-8">
+            <h1 class="text-3xl font-bold text-gray-900">Video Call Help & Troubleshooting</h1>
+            <p class="text-gray-600 mt-2">Common issues and solutions for video calling</p>
+        </div>
+
+        <!-- Quick Links -->
+        <div class="bg-white rounded-lg shadow-sm p-6 mb-8">
+            <h3 class="text-xl font-semibold mb-4">Quick Links</h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <a href="{{ url_for('video_call_status') }}" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-3 rounded-lg text-center transition-colors">
+                    <i class="fas fa-cog mr-2"></i>System Status
+                </a>
+                <a href="{{ url_for('call_history') }}" class="bg-green-600 hover:bg-green-700 text-white px-4 py-3 rounded-lg text-center transition-colors">
+                    <i class="fas fa-history mr-2"></i>Call History
+                </a>
+                <a href="{{ url_for('dashboard') }}" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-3 rounded-lg text-center transition-colors">
+                    <i class="fas fa-home mr-2"></i>Dashboard
+                </a>
+            </div>
+        </div>
+
+        <!-- Common Issues -->
+        <div class="space-y-6">
+            <!-- Camera Issues -->
+            <div class="bg-white rounded-lg shadow-sm p-6">
+                <h3 class="text-xl font-semibold mb-4 flex items-center">
+                    <i class="fas fa-camera text-blue-600 mr-3"></i>Camera Issues
+                </h3>
+                <div class="space-y-4">
+                    <div class="border-l-4 border-blue-500 pl-4">
+                        <h4 class="font-medium text-gray-900">Camera not working or showing black screen</h4>
+                        <ul class="mt-2 text-sm text-gray-600 space-y-1">
+                            <li>• Check if camera permissions are granted in browser settings</li>
+                            <li>• Ensure no other applications are using the camera</li>
+                            <li>• Try refreshing the page or restarting your browser</li>
+                            <li>• Check if camera drivers are up to date</li>
+                        </ul>
+                    </div>
+                    <div class="border-l-4 border-yellow-500 pl-4">
+                        <h4 class="font-medium text-gray-900">Poor video quality</h4>
+                        <ul class="mt-2 text-sm text-gray-600 space-y-1">
+                            <li>• Check your internet connection speed</li>
+                            <li>• Ensure good lighting in your environment</li>
+                            <li>• Close other bandwidth-intensive applications</li>
+                            <li>• Try moving closer to your WiFi router</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Audio Issues -->
+            <div class="bg-white rounded-lg shadow-sm p-6">
+                <h3 class="text-xl font-semibold mb-4 flex items-center">
+                    <i class="fas fa-microphone text-green-600 mr-3"></i>Audio Issues
+                </h3>
+                <div class="space-y-4">
+                    <div class="border-l-4 border-green-500 pl-4">
+                        <h4 class="font-medium text-gray-900">Microphone not working</h4>
+                        <ul class="mt-2 text-sm text-gray-600 space-y-1">
+                            <li>• Check microphone permissions in browser settings</li>
+                            <li>• Verify microphone is not muted in system settings</li>
+                            <li>• Test microphone in other applications</li>
+                            <li>• Try using a different microphone or headset</li>
+                        </ul>
+                    </div>
+                    <div class="border-l-4 border-red-500 pl-4">
+                        <h4 class="font-medium text-gray-900">Echo or feedback</h4>
+                        <ul class="mt-2 text-sm text-gray-600 space-y-1">
+                            <li>• Use headphones or earbuds instead of speakers</li>
+                            <li>• Reduce speaker volume</li>
+                            <li>• Ensure participants are not too close to their microphones</li>
+                            <li>• Check for multiple audio devices being used</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Connection Issues -->
+            <div class="bg-white rounded-lg shadow-sm p-6">
+                <h3 class="text-xl font-semibold mb-4 flex items-center">
+                    <i class="fas fa-wifi text-purple-600 mr-3"></i>Connection Issues
+                </h3>
+                <div class="space-y-4">
+                    <div class="border-l-4 border-purple-500 pl-4">
+                        <h4 class="font-medium text-gray-900">Call won't connect or keeps dropping</h4>
+                        <ul class="mt-2 text-sm text-gray-600 space-y-1">
+                            <li>• Check your internet connection stability</li>
+                            <li>• Try switching from WiFi to mobile data or vice versa</li>
+                            <li>• Disable VPN if you're using one</li>
+                            <li>• Clear browser cache and cookies</li>
+                        </ul>
+                    </div>
+                    <div class="border-l-4 border-orange-500 pl-4">
+                        <h4 class="font-medium text-gray-900">Slow or laggy video</h4>
+                        <ul class="mt-2 text-sm text-gray-600 space-y-1">
+                            <li>• Close unnecessary browser tabs and applications</li>
+                            <li>• Check if other devices are using bandwidth</li>
+                            <li>• Try using a wired internet connection</li>
+                            <li>• Restart your router/modem</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Browser Issues -->
+            <div class="bg-white rounded-lg shadow-sm p-6">
+                <h3 class="text-xl font-semibold mb-4 flex items-center">
+                    <i class="fas fa-globe text-indigo-600 mr-3"></i>Browser Issues
+                </h3>
+                <div class="space-y-4">
+                    <div class="border-l-4 border-indigo-500 pl-4">
+                        <h4 class="font-medium text-gray-900">Video calls not supported</h4>
+                        <ul class="mt-2 text-sm text-gray-600 space-y-1">
+                            <li>• Use a modern browser (Chrome, Firefox, Safari, Edge)</li>
+                            <li>• Update your browser to the latest version</li>
+                            <li>• Enable JavaScript in browser settings</li>
+                            <li>• Disable browser extensions that might interfere</li>
+                        </ul>
+                    </div>
+                    <div class="border-l-4 border-pink-500 pl-4">
+                        <h4 class="font-medium text-gray-900">Permission issues</h4>
+                        <ul class="mt-2 text-sm text-gray-600 space-y-1">
+                            <li>• Click the camera/microphone icon in the address bar</li>
+                            <li>• Select "Allow" for camera and microphone access</li>
+                            <li>• Check site permissions in browser settings</li>
+                            <li>• Try using an incognito/private browsing window</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- System Requirements -->
+        <div class="bg-white rounded-lg shadow-sm p-6 mt-8">
+            <h3 class="text-xl font-semibold mb-4">System Requirements</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                    <h4 class="font-medium text-gray-900 mb-3">Minimum Requirements</h4>
+                    <ul class="text-sm text-gray-600 space-y-2">
+                        <li class="flex items-center"><i class="fas fa-check text-green-500 mr-2"></i>Modern web browser (Chrome 60+, Firefox 60+, Safari 12+, Edge 79+)</li>
+                        <li class="flex items-center"><i class="fas fa-check text-green-500 mr-2"></i>Webcam and microphone</li>
+                        <li class="flex items-center"><i class="fas fa-check text-green-500 mr-2"></i>Stable internet connection (minimum 1 Mbps)</li>
+                        <li class="flex items-center"><i class="fas fa-check text-green-500 mr-2"></i>JavaScript enabled</li>
+                    </ul>
+                </div>
+                <div>
+                    <h4 class="font-medium text-gray-900 mb-3">Recommended</h4>
+                    <ul class="text-sm text-gray-600 space-y-2">
+                        <li class="flex items-center"><i class="fas fa-star text-yellow-500 mr-2"></i>High-speed internet (5+ Mbps)</li>
+                        <li class="flex items-center"><i class="fas fa-star text-yellow-500 mr-2"></i>HD webcam</li>
+                        <li class="flex items-center"><i class="fas fa-star text-yellow-500 mr-2"></i>Noise-canceling headphones</li>
+                        <li class="flex items-center"><i class="fas fa-star text-yellow-500 mr-2"></i>Good lighting environment</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- Contact Support -->
+        <div class="bg-blue-50 border border-blue-200 rounded-lg p-6 mt-8">
+            <h3 class="text-xl font-semibold text-blue-900 mb-4">Still Need Help?</h3>
+            <p class="text-blue-800 mb-4">If you're still experiencing issues with video calls, please contact our support team:</p>
+            <div class="flex flex-col sm:flex-row gap-4">
+                <a href="mailto:support@mindfullhorizon.com" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg text-center transition-colors">
+                    <i class="fas fa-envelope mr-2"></i>Email Support
+                </a>
+                <button onclick="reportIssue()" class="bg-white hover:bg-gray-50 text-blue-600 border border-blue-600 px-6 py-3 rounded-lg transition-colors">
+                    <i class="fas fa-bug mr-2"></i>Report Issue
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Issue Report Modal -->
+<div id="issueReportModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
+    <div class="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="text-xl font-semibold">Report an Issue</h3>
+            <button onclick="closeIssueReport()" class="text-gray-400 hover:text-gray-600">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        
+        <form id="issueReportForm" class="space-y-4">
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">Issue Type</label>
+                <select id="issueType" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                    <option value="camera">Camera not working</option>
+                    <option value="audio">Audio problems</option>
+                    <option value="connection">Connection issues</option>
+                    <option value="quality">Poor call quality</option>
+                    <option value="other">Other</option>
+                </select>
+            </div>
+            
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">Description</label>
+                <textarea id="issueDescription" rows="4" class="w-full border border-gray-300 rounded-lg px-3 py-2" placeholder="Please describe the issue in detail..."></textarea>
+            </div>
+            
+            <div class="flex justify-end space-x-3 pt-4">
+                <button type="button" onclick="closeIssueReport()" class="px-4 py-2 text-gray-600 hover:text-gray-800">Cancel</button>
+                <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg">Submit Report</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function reportIssue() {
+    document.getElementById('issueReportModal').classList.remove('hidden');
+}
+
+function closeIssueReport() {
+    document.getElementById('issueReportModal').classList.add('hidden');
+    document.getElementById('issueReportForm').reset();
+}
+
+document.getElementById('issueReportForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    
+    const issueType = document.getElementById('issueType').value;
+    const description = document.getElementById('issueDescription').value;
+    
+    if (!description.trim()) {
+        alert('Please provide a description of the issue.');
+        return;
+    }
+    
+    // Here you would typically send the report to your server
+    console.log('Issue Report:', { type: issueType, description: description });
+    
+    alert('Thank you for your report! Our support team will review it and get back to you.');
+    closeIssueReport();
+});
+</script>
+{% endblock %}

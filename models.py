@@ -616,3 +616,86 @@ def get_institutional_summary(institution, db, days_active=7, days_risk=7, days_
         'completion_rate': completion_rate,
         'satisfaction_score': satisfaction_score
     }
+
+class VideoCall(db.Model):
+    """Model to track video call history and analytics."""
+    __tablename__ = 'video_calls'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    call_id = db.Column(db.String(36), unique=True, nullable=False, index=True)  # UUID
+    patient_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    provider_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    
+    # Call status and timing
+    status = db.Column(db.String(20), nullable=False, default='initiated', index=True)  # initiated, answered, rejected, ended, failed
+    initiated_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    answered_at = db.Column(db.DateTime, nullable=True)
+    ended_at = db.Column(db.DateTime, nullable=True)
+    duration_seconds = db.Column(db.Integer, nullable=True)  # Call duration in seconds
+    
+    # Call quality metrics
+    connection_quality = db.Column(db.String(20), nullable=True)  # excellent, good, fair, poor
+    audio_quality = db.Column(db.String(20), nullable=True)
+    video_quality = db.Column(db.String(20), nullable=True)
+    
+    # Technical details
+    ended_by = db.Column(db.String(20), nullable=True)  # patient, provider, system
+    end_reason = db.Column(db.String(100), nullable=True)  # user_ended, connection_lost, timeout, etc.
+    
+    # Notes and feedback
+    provider_notes = db.Column(db.Text, nullable=True)
+    patient_feedback = db.Column(db.Text, nullable=True)
+    rating = db.Column(db.Integer, nullable=True)  # 1-5 star rating
+    
+    # Relationships
+    patient = db.relationship('User', foreign_keys=[patient_id], backref='patient_calls')
+    provider = db.relationship('User', foreign_keys=[provider_id], backref='provider_calls')
+    
+    # Indexes for common queries
+    __table_args__ = (
+        db.Index('idx_call_patient_date', 'patient_id', 'initiated_at'),
+        db.Index('idx_call_provider_date', 'provider_id', 'initiated_at'),
+        db.Index('idx_call_status_date', 'status', 'initiated_at'),
+    )
+    
+    def __repr__(self):
+        return f'<VideoCall {self.call_id}: {self.status}>'
+    
+    @property
+    def duration_formatted(self):
+        """Return formatted duration string."""
+        if not self.duration_seconds:
+            return "0:00"
+        
+        minutes = self.duration_seconds // 60
+        seconds = self.duration_seconds % 60
+        return f"{minutes}:{seconds:02d}"
+    
+    @property
+    def is_completed(self):
+        """Check if call was completed successfully."""
+        return self.status == 'ended' and self.duration_seconds and self.duration_seconds > 0
+    
+    def to_dict(self):
+        """Convert to dictionary for JSON serialization."""
+        return {
+            'id': self.id,
+            'call_id': self.call_id,
+            'patient_id': self.patient_id,
+            'provider_id': self.provider_id,
+            'patient_name': self.patient.name if self.patient else None,
+            'provider_name': self.provider.name if self.provider else None,
+            'status': self.status,
+            'initiated_at': self.initiated_at.strftime('%Y-%m-%d %H:%M:%S') if self.initiated_at else None,
+            'answered_at': self.answered_at.strftime('%Y-%m-%d %H:%M:%S') if self.answered_at else None,
+            'ended_at': self.ended_at.strftime('%Y-%m-%d %H:%M:%S') if self.ended_at else None,
+            'duration_seconds': self.duration_seconds,
+            'duration_formatted': self.duration_formatted,
+            'connection_quality': self.connection_quality,
+            'audio_quality': self.audio_quality,
+            'video_quality': self.video_quality,
+            'ended_by': self.ended_by,
+            'end_reason': self.end_reason,
+            'rating': self.rating,
+            'is_completed': self.is_completed
+        }
