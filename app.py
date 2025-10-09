@@ -42,7 +42,20 @@ console_formatter = logging.Formatter('%(levelname)s - %(message)s')
 console_handler.setFormatter(console_formatter)
 logger.addHandler(console_handler)
 
-from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify, send_from_directory, abort, get_flashed_messages
+from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify, send_from_directory
+from nltk.stem import WordNetLemmatizer
+from nltk.tokenize import word_tokenize
+import nltk
+
+# Download NLTK data if not already present
+try:
+    nltk.data.find('tokenizers/punkt')
+except nltk.downloader.DownloadError:
+    nltk.download('punkt')
+try:
+    nltk.data.find('corpora/wordnet')
+except nltk.downloader.DownloadError:
+    nltk.download('wordnet'), abort, get_flashed_messages
 from flask_session import Session
 from flask_compress import Compress
 from flask_migrate import Migrate
@@ -54,8 +67,8 @@ from flask_caching import Cache
 
 from ai_service import ai_service
 from extensions import db, migrate, flask_session, compress, csrf
-from models import User, Assessment, DigitalDetoxLog, RPMData, Gamification, ClinicalNote, InstitutionalAnalytics, Appointment, Goal, Medication, MedicationLog, BreathingExerciseLog, YogaLog, MusicTherapyLog, ProgressRecommendation, get_user_wellness_trend, get_institutional_summary, Notification, VideoCall
-from models import BlogPost, BlogComment, BlogLike, BlogInsight, Prescription  # Ensure BlogPost and related models are imported
+from models import User, Assessment, DigitalDetoxLog, RPMData, Gamification, ClinicalNote, InstitutionalAnalytics, Appointment, Goal, Medication, MedicationLog, BreathingExerciseLog, YogaLog, MusicTherapyLog, ProgressRecommendation, get_user_wellness_trend, get_institutional_summary, Notification
+from models import BlogPost, BlogComment, BlogLike, BlogInsight, Prescription, MoodLog  # Ensure BlogPost and related models are imported
 
 # In-memory storage for patient features (no database required)
 patient_journal_entries = {}  # user_id -> list of journal entries
@@ -121,11 +134,13 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = engine_options
 
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-# Initialize rate limiter
+# Initialize rate limiter with simple storage backend for development
+# For production, consider Redis or another persistent storage
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,
-    default_limits=["200 per day", "50 per hour"]
+    default_limits=["200 per day", "50 per hour"],
+    storage_uri="memory://"  # Use memory storage but suppress warning for development
 )
 
 # Initialize caching
@@ -291,6 +306,15 @@ def login_required(f):
         session.modified = True
         return f(*args, **kwargs)
     return decorated_function
+
+# Favicon route to prevent 404 errors
+@app.route('/favicon.ico')
+def favicon():
+    try:
+        return send_from_directory(os.path.join(app.root_path, 'static'), 'favicon.ico', mimetype='image/vnd.microsoft.icon')
+    except FileNotFoundError:
+        # Return empty response for missing favicon to avoid 404
+        return '', 204
 
 # Blog Delete Route (placed after app, login_required, and abort are defined)
 @app.route('/blog/<int:post_id>/delete', methods=['POST'])
@@ -529,11 +553,11 @@ def logout():
 def patient_dashboard():
     user_id = session['user_id']
     
-    # Use eager loading to prevent N+1 queries
     from sqlalchemy.orm import joinedload
     gamification = Gamification.query.filter_by(user_id=user_id).first()
     rpm_data = RPMData.query.filter_by(user_id=user_id).order_by(RPMData.date.desc()).first()
     all_appointments = Appointment.query.filter_by(user_id=user_id).order_by(Appointment.date.asc(), Appointment.time.asc()).all()
+    latest_mood = MoodLog.query.filter_by(user_id=user_id).order_by(MoodLog.created_at.desc()).first()
 
     upcoming_appointments = []
     past_appointments = []
@@ -547,7 +571,6 @@ def patient_dashboard():
             else:
                 past_appointments.append(appt)
         except Exception as e:
-            logger.error(f"Error processing appointment {appt.id}: {e}")
             continue
 
     data = {
@@ -577,20 +600,8 @@ def patient_dashboard():
                          data=data,
                          alerts=alerts,
                          upcoming_appointments=upcoming_appointments,
-                         past_appointments=past_appointments)
-
-@app.route('/dashboard')
-@login_required
-def dashboard():
-    """Unified dashboard route that redirects based on user role"""
-    user_role = session.get('user_role')
-    if user_role == 'patient':
-        return redirect(url_for('patient_dashboard'))
-    elif user_role == 'provider':
-        return redirect(url_for('provider_dashboard'))
-    else:
-        flash('Invalid user role', 'error')
-        return redirect(url_for('index'))
+                         past_appointments=past_appointments,
+                         latest_mood=latest_mood)
 
 @app.route('/provider-dashboard')
 @login_required
@@ -1205,7 +1216,7 @@ def breathing():
                     user_id=user_id,
                     exercise_name=exercise_name,
                     duration_minutes=int(duration_minutes),
-                    created_at=datetime.now(datetime.UTC)
+                    created_at=datetime.now(timezone.utc)
                 )
                 db.session.add(new_log)
                 db.session.commit()
@@ -1260,7 +1271,7 @@ def yoga():
                     user_id=user_id,
                     session_name=session_name,
                     duration_minutes=int(duration_minutes),
-                    created_at=datetime.now(datetime.UTC)
+                    created_at=datetime.now(timezone.utc)
                 )
                 db.session.add(new_log)
                 db.session.commit()
@@ -1312,373 +1323,6 @@ def telehealth_session(user_id):
 @login_required
 def telehealth():
     return render_template('telehealth.html', user_name=session['user_name'])
-
-# --- Video Call Routes ---
-@app.route('/video-call')
-@login_required
-def video_call():
-    """Video call interface"""
-    call_id = request.args.get('call_id')
-    if not call_id:
-        flash('Invalid call ID', 'error')
-        return redirect(url_for('dashboard'))
-    
-    return render_template('video_call.html', call_id=call_id)
-
-@app.route('/initiate-call', methods=['POST'])
-@login_required
-def initiate_call():
-    """Initiate a video call with a provider"""
-    try:
-        data = request.get_json()
-        provider_id = data.get('provider_id')
-        
-        if not provider_id:
-            return jsonify({'success': False, 'message': 'Provider ID required'}), 400
-        
-        # Check if provider exists
-        provider = User.query.filter_by(id=provider_id, role='provider').first()
-        if not provider:
-            return jsonify({'success': False, 'message': 'Provider not found'}), 404
-        
-        # Generate unique call ID
-        call_id = str(uuid.uuid4())
-        
-        # Create VideoCall record
-        video_call = VideoCall(
-            call_id=call_id,
-            patient_id=session['user_id'],
-            provider_id=provider_id,
-            status='initiated'
-        )
-        
-        db.session.add(video_call)
-        db.session.commit()
-        
-        # Notify provider about incoming call
-        socketio.emit('incoming_call', {
-            'call_id': call_id,
-            'patient_id': session['user_id'],
-            'patient_name': session['user_name'],
-            'patient_email': session['user_email']
-        }, room=f"user_{provider_id}")
-        
-        # Set up call timeout (30 seconds)
-        def timeout_call():
-            try:
-                # Check if call is still pending
-                call_check = VideoCall.query.filter_by(call_id=call_id).first()
-                if call_check and call_check.status == 'initiated':
-                    call_check.status = 'timeout'
-                    call_check.ended_at = datetime.utcnow()
-                    call_check.ended_by = 'system'
-                    call_check.end_reason = 'timeout'
-                    db.session.commit()
-                    
-                    # Notify patient about timeout
-                    socketio.emit('call_timeout', {
-                        'call_id': call_id,
-                        'message': 'Call timed out - provider did not answer'
-                    }, room=f"user_{session['user_id']}")
-                    
-            except Exception as e:
-                logger.error(f"Error in call timeout: {e}")
-        
-        # Schedule timeout after 30 seconds
-        import threading
-        timer = threading.Timer(30.0, timeout_call)
-        timer.start()
-        
-        return jsonify({
-            'success': True, 
-            'call_id': call_id,
-            'message': 'Call initiated successfully'
-        })
-        
-    except Exception as e:
-        logger.error(f"Error initiating call: {e}")
-        db.session.rollback()
-        return jsonify({'success': False, 'message': 'Failed to initiate call'}), 500
-
-@app.route('/answer-call', methods=['POST'])
-@login_required
-def answer_call():
-    """Answer an incoming video call"""
-    try:
-        data = request.get_json()
-        call_id = data.get('call_id')
-        
-        if not call_id:
-            return jsonify({'success': False, 'message': 'Call ID required'}), 400
-        
-        # Update VideoCall record
-        video_call = VideoCall.query.filter_by(call_id=call_id).first()
-        if video_call:
-            video_call.status = 'answered'
-            video_call.answered_at = datetime.utcnow()
-            db.session.commit()
-        
-        # Notify patient that call was answered
-        if video_call:
-            call_data = {
-                'call_id': call_id,
-                'provider_id': session['user_id'],
-                'provider_name': session['user_name']
-            }
-            # Send to both user room and call room
-            socketio.emit('call_answered', call_data, room=f"user_{video_call.patient_id}")
-            socketio.emit('call_answered', call_data, room=f"call_{call_id}")
-        
-        return jsonify({
-            'success': True,
-            'message': 'Call answered',
-            'redirect_url': url_for('video_call', call_id=call_id)
-        })
-        
-    except Exception as e:
-        logger.error(f"Error answering call: {e}")
-        db.session.rollback()
-        return jsonify({'success': False, 'message': 'Failed to answer call'}), 500
-
-@app.route('/reject-call', methods=['POST'])
-@login_required
-def reject_call():
-    """Reject an incoming video call"""
-    try:
-        data = request.get_json()
-        call_id = data.get('call_id')
-        
-        if not call_id:
-            return jsonify({'success': False, 'message': 'Call ID required'}), 400
-        
-        # Update VideoCall record
-        video_call = VideoCall.query.filter_by(call_id=call_id).first()
-        if video_call:
-            video_call.status = 'rejected'
-            video_call.ended_at = datetime.utcnow()
-            video_call.ended_by = 'provider'
-            video_call.end_reason = 'rejected_by_provider'
-            db.session.commit()
-        
-        # Notify patient that call was rejected
-        if video_call:
-            call_data = {
-                'call_id': call_id,
-                'provider_id': session['user_id'],
-                'provider_name': session['user_name']
-            }
-            # Send to both user room and call room
-            socketio.emit('call_rejected', call_data, room=f"user_{video_call.patient_id}")
-            socketio.emit('call_rejected', call_data, room=f"call_{call_id}")
-        
-        return jsonify({'success': True, 'message': 'Call rejected'})
-        
-    except Exception as e:
-        logger.error(f"Error rejecting call: {e}")
-        db.session.rollback()
-        return jsonify({'success': False, 'message': 'Failed to reject call'}), 500
-
-@app.route('/get-providers')
-@login_required
-def get_providers():
-    """Get available providers for video calls"""
-    try:
-        # Get current user's institution
-        user_institution = session.get('user_institution')
-        logger.info(f"User institution from session: {user_institution}")
-        
-        # If no institution in session, get from database
-        if not user_institution:
-            current_user = User.query.get(session['user_id'])
-            user_institution = current_user.institution if current_user else 'Haridwar University'
-            session['user_institution'] = user_institution
-            logger.info(f"Updated user institution from database: {user_institution}")
-        
-        # Get providers from the same institution or all providers if no institution match
-        providers = User.query.filter_by(role='provider', institution=user_institution).all()
-        
-        # If no providers found with same institution, get all providers
-        if not providers:
-            providers = User.query.filter_by(role='provider').all()
-            logger.info(f"No providers found for institution '{user_institution}', returning all providers")
-        
-        providers_data = []
-        for provider in providers:
-            providers_data.append({
-                'id': provider.id,
-                'name': provider.name,
-                'email': provider.email,
-                'specialization': getattr(provider, 'specialization', 'Mental Health Provider'),
-                'institution': provider.institution
-            })
-        
-        logger.info(f"Returning {len(providers_data)} providers")
-        
-        return jsonify({
-            'success': True,
-            'providers': providers_data
-        })
-        
-    except Exception as e:
-        logger.error(f"Error getting providers: {e}")
-        return jsonify({'success': False, 'message': 'Failed to get providers'}), 500
-
-@app.route('/call-history')
-@login_required
-def call_history():
-    """View call history for the current user"""
-    try:
-        user_id = session['user_id']
-        user_role = session['user_role']
-        
-        # Get calls based on user role
-        if user_role == 'patient':
-            calls = VideoCall.query.filter_by(patient_id=user_id).order_by(VideoCall.initiated_at.desc()).limit(50).all()
-        elif user_role == 'provider':
-            calls = VideoCall.query.filter_by(provider_id=user_id).order_by(VideoCall.initiated_at.desc()).limit(50).all()
-        else:
-            calls = []
-        
-        calls_data = [call.to_dict() for call in calls]
-        
-        return render_template('call_history.html', 
-                             calls=calls_data,
-                             user_role=user_role,
-                             user_name=session['user_name'])
-        
-    except Exception as e:
-        logger.error(f"Error getting call history: {e}")
-        flash('Failed to load call history', 'error')
-        return redirect(url_for('dashboard'))
-
-@app.route('/call-history-api')
-@login_required
-def call_history_api():
-    """API endpoint for call history data"""
-    try:
-        user_id = session['user_id']
-        user_role = session['user_role']
-        
-        # Get calls based on user role
-        if user_role == 'patient':
-            calls = VideoCall.query.filter_by(patient_id=user_id).order_by(VideoCall.initiated_at.desc()).limit(50).all()
-        elif user_role == 'provider':
-            calls = VideoCall.query.filter_by(provider_id=user_id).order_by(VideoCall.initiated_at.desc()).limit(50).all()
-        else:
-            calls = []
-        
-        calls_data = [call.to_dict() for call in calls]
-        
-        return jsonify({
-            'success': True,
-            'calls': calls_data
-        })
-        
-    except Exception as e:
-        logger.error(f"Error getting call history: {e}")
-        return jsonify({'success': False, 'message': 'Failed to get call history'}), 500
-
-@app.route('/report-call-quality', methods=['POST'])
-@login_required
-def report_call_quality():
-    """Report call quality metrics"""
-    try:
-        data = request.get_json()
-        call_id = data.get('call_id')
-        audio_quality = data.get('audio_quality')
-        video_quality = data.get('video_quality')
-        
-        if not call_id:
-            return jsonify({'success': False, 'message': 'Call ID required'}), 400
-        
-        # Update VideoCall record with quality metrics
-        video_call = VideoCall.query.filter_by(call_id=call_id).first()
-        if video_call:
-            video_call.audio_quality = audio_quality
-            video_call.video_quality = video_quality
-            
-            # Determine overall connection quality
-            if audio_quality == 'excellent' and video_quality == 'excellent':
-                video_call.connection_quality = 'excellent'
-            elif audio_quality in ['excellent', 'good'] and video_quality in ['excellent', 'good']:
-                video_call.connection_quality = 'good'
-            elif audio_quality in ['excellent', 'good', 'fair'] and video_quality in ['excellent', 'good', 'fair']:
-                video_call.connection_quality = 'fair'
-            else:
-                video_call.connection_quality = 'poor'
-            
-            db.session.commit()
-        
-        return jsonify({'success': True, 'message': 'Quality reported successfully'})
-        
-    except Exception as e:
-        logger.error(f"Error reporting call quality: {e}")
-        db.session.rollback()
-        return jsonify({'success': False, 'message': 'Failed to report quality'}), 500
-
-@app.route('/video-call-status')
-@login_required
-def video_call_status():
-    """Video call system status and testing page"""
-    return render_template('video_call_status.html')
-
-@app.route('/video-call-help')
-@login_required
-def video_call_help():
-    """Video call help and troubleshooting page"""
-    return render_template('video_call_help.html')
-
-@app.route('/video-call-test')
-@login_required
-def video_call_test_page():
-    """Video call testing page"""
-    return render_template('video_call_test.html')
-
-@app.route('/test-video-call')
-@login_required
-def test_video_call():
-    """Test route to verify video call functionality"""
-    try:
-        # Get current user info
-        user_id = session['user_id']
-        user_role = session['user_role']
-        
-        # Test data
-        test_data = {
-            'user_id': user_id,
-            'user_role': user_role,
-            'providers_count': 0,
-            'calls_count': 0,
-            'recent_calls': []
-        }
-        
-        # Count providers
-        if user_role == 'patient':
-            user_institution = session.get('user_institution', 'Sample University')
-            providers = User.query.filter_by(role='provider', institution=user_institution).all()
-            test_data['providers_count'] = len(providers)
-            test_data['providers'] = [{'id': p.id, 'name': p.name, 'email': p.email} for p in providers[:5]]
-        
-        # Count calls
-        if user_role == 'patient':
-            calls = VideoCall.query.filter_by(patient_id=user_id).all()
-        elif user_role == 'provider':
-            calls = VideoCall.query.filter_by(provider_id=user_id).all()
-        else:
-            calls = []
-        
-        test_data['calls_count'] = len(calls)
-        test_data['recent_calls'] = [call.to_dict() for call in calls[-5:]]
-        
-        return jsonify({
-            'success': True,
-            'message': 'Video call system test completed',
-            'data': test_data
-        })
-        
-    except Exception as e:
-        logger.error(f"Error in video call test: {e}")
-        return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/digital-detox')
 @login_required
@@ -1859,44 +1503,81 @@ def goals():
     goals = Goal.query.filter_by(user_id=user_id).all()
     return render_template('goals.html', user_name=session['user_name'], goals=goals)
 
+@app.route('/api/assessment/questions/<assessment_type>')
+@login_required
+@role_required('patient')
+def get_assessment_questions(assessment_type):
+    try:
+        # Construct the full path to the questions.json file
+        questions_file_path = os.path.join(app.static_folder, 'questions.json')
+        
+        # Check if the file exists
+        if not os.path.exists(questions_file_path):
+            logger.error(f"questions.json not found at {questions_file_path}")
+            return jsonify({'success': False, 'message': 'Assessment questions file not found.'}), 500
+
+        # Load the questions from the JSON file
+        with open(questions_file_path, 'r') as f:
+            all_questions = json.load(f)
+        
+        # Get the questions for the requested assessment type
+        questions = all_questions.get(assessment_type)
+        
+        if questions:
+            return jsonify({'success': True, 'questions': questions})
+        else:
+            return jsonify({'success': False, 'message': 'Invalid assessment type.'}), 404
+            
+    except Exception as e:
+        logger.error(f"Error fetching assessment questions: {e}")
+        return jsonify({'success': False, 'message': 'An internal error occurred.'}), 500
+
 @app.route('/assessment')
 @login_required
 @role_required('patient')
 def assessment():
-    user_id = session['user_id']
-    assessment_objects = Assessment.query.filter_by(user_id=user_id).order_by(Assessment.created_at.desc()).all()
-    
-    assessments = []
-    for assessment in assessment_objects:
-        assessment_dict = {
-            'id': assessment.id,
-            'user_id': assessment.user_id,
-            'assessment_type': assessment.assessment_type,
-            'score': assessment.score,
-            'responses': assessment.responses,
-            'created_at': assessment.created_at.isoformat() if assessment.created_at else None,
-            'ai_insights': {}
-        }
+    try:
+        user_id = session['user_id']
+        assessment_objects = Assessment.query.filter_by(user_id=user_id).order_by(Assessment.created_at.desc()).all()
         
-        if assessment.ai_insights:
-            if isinstance(assessment.ai_insights, str):
-                try:
-                    assessment_dict['ai_insights'] = json.loads(assessment.ai_insights)
-                except json.JSONDecodeError:
-                    assessment_dict['ai_insights'] = {}
-            else:
-                assessment_dict['ai_insights'] = assessment.ai_insights
+        assessments = []
+        for assessment in assessment_objects:
+            assessment_dict = {
+                'id': assessment.id,
+                'user_id': assessment.user_id,
+                'assessment_type': assessment.assessment_type,
+                'score': assessment.score,
+                'responses': assessment.responses,
+                'created_at': assessment.created_at.isoformat() if assessment.created_at else None,
+                'ai_insights': {}
+            }
+            
+            if assessment.ai_insights:
+                if isinstance(assessment.ai_insights, str):
+                    try:
+                        assessment_dict['ai_insights'] = json.loads(assessment.ai_insights)
+                    except json.JSONDecodeError:
+                        assessment_dict['ai_insights'] = {}
+                else:
+                    assessment_dict['ai_insights'] = assessment.ai_insights
+            
+            assessments.append(assessment_dict)
         
-        assessments.append(assessment_dict)
-    
-    latest_insights = None
-    if assessments:
-        latest_insights = assessments[0].get('ai_insights')
+        latest_insights = None
+        if assessments:
+            latest_insights = assessments[0].get('ai_insights')
 
-    return render_template('assessment.html', 
-                           user_name=session['user_name'], 
-                           assessments=assessments,
-                           latest_insights=latest_insights)
+        return render_template('assessment.html', 
+                               user_name=session['user_name'], 
+                               assessments=assessments,
+                               latest_insights=latest_insights)
+    except Exception as e:
+        logger.error(f"Error in assessment route: {e}")
+        flash('Error loading assessments. Please try again.', 'error')
+        return render_template('assessment.html', 
+                               user_name=session['user_name'], 
+                               assessments=[],
+                               latest_insights=None)
 
 @app.route('/api/save-assessment', methods=['POST'])
 @login_required
@@ -2877,19 +2558,19 @@ def handle_goals():
     user_id = session['user_id']
 
     if request.method == 'POST':
-        data = request.json
-        title = data.get('title')
-        description = data.get('description', '')
-        category = data.get('category', 'mental_health')
-        priority = data.get('priority', 'medium')
-        target_value = data.get('target_value')
-        unit = data.get('unit', '')
-        target_date = data.get('target_date')
-
-        if not title:
-            return jsonify({'success': False, 'message': 'Goal title is required.'}), 400
-
         try:
+            data = request.get_json()
+            title = data.get('title')
+            description = data.get('description')
+            category = data.get('category')
+            target_value = data.get('target_value')
+            unit = data.get('unit')
+            priority = data.get('priority')
+            target_date = data.get('target_date')
+
+            if not title:
+                return jsonify({'success': False, 'message': 'Title is required.'}), 400
+
             parsed_target_date = None
             if target_date:
                 parsed_target_date = datetime.strptime(target_date, '%Y-%m-%d').date()
@@ -2900,9 +2581,7 @@ def handle_goals():
                 description=description,
                 category=category,
                 priority=priority,
-                status='active',
-                target_value=float(target_value) if target_value and target_value.strip() else None,
-                current_value=0.0,
+                target_value=float(target_value) if target_value else None,
                 unit=unit,
                 target_date=parsed_target_date,
                 start_date=datetime.utcnow().date()
@@ -3145,15 +2824,45 @@ def save_mood():
 def blog_list():
     try:
         posts = BlogPost.query.filter_by(is_published=True).order_by(BlogPost.created_at.desc()).all()
+        # Get blog insights for display
+        insights = {
+            'total_posts': BlogPost.query.count(),
+            'total_likes': 0,
+            'total_comments': 0,
+            'total_views': sum([post.views for post in posts]) if posts else 0,
+            'most_popular_post': None
+        }
+        if posts:
+            insights['most_popular_post'] = max(posts, key=lambda p: p.views) if posts else None
     except SQLAlchemyError as e:
         logger.error(f"Error fetching blog posts: {e}")
         posts = []
-    return render_template('blog_list.html', posts=posts)
+        insights = None
+    return render_template('blog_list.html', posts=posts, insights=insights)
 
 @app.route('/blog/<int:post_id>')
 def blog_detail(post_id):
     post = BlogPost.query.get_or_404(post_id)
-    return render_template('blog_detail.html', post=post)
+    
+    # Increment view count
+    post.views += 1
+    db.session.commit()
+    
+    # Get comments for this post
+    comments = BlogComment.query.filter_by(post_id=post_id).order_by(BlogComment.created_at.asc()).all()
+    
+    # Check if current user has liked this post
+    user_has_liked = False
+    if session.get('user_id'):
+        user_has_liked = BlogLike.query.filter_by(
+            user_id=session['user_id'], 
+            post_id=post_id
+        ).first() is not None
+    
+    return render_template('blog_detail.html', 
+                         post=post, 
+                         comments=comments, 
+                         user_has_liked=user_has_liked)
 
 @app.route('/blog/create', methods=['GET', 'POST'])
 @login_required
@@ -3204,6 +2913,94 @@ def blog_edit(post_id):
             logger.error(f"Error updating blog post: {e}")
             flash('Failed to update blog post.', 'error')
     return render_template('blog_edit.html', post=post)
+
+# Blog API routes for AJAX functionality
+@app.route('/api/blog/<int:post_id>/like', methods=['POST'])
+@login_required
+def blog_like(post_id):
+    """Toggle like for a blog post"""
+    user_id = session['user_id']
+    post = BlogPost.query.get_or_404(post_id)
+    
+    # Check if user already liked this post
+    existing_like = BlogLike.query.filter_by(user_id=user_id, post_id=post_id).first()
+    
+    try:
+        if existing_like:
+            # Unlike the post
+            db.session.delete(existing_like)
+            liked = False
+        else:
+            # Like the post
+            new_like = BlogLike(user_id=user_id, post_id=post_id)
+            db.session.add(new_like)
+            liked = True
+        
+        db.session.commit()
+        
+        # Get updated like count
+        like_count = BlogLike.query.filter_by(post_id=post_id).count()
+        
+        return jsonify({
+            'success': True,
+            'liked': liked,
+            'like_count': like_count
+        })
+        
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        logger.error(f"Error toggling like for post {post_id}: {e}")
+        return jsonify({'success': False, 'message': 'Failed to update like'}), 500
+
+@app.route('/api/blog/<int:post_id>/comment', methods=['POST'])
+@login_required
+def blog_comment(post_id):
+    """Add a comment to a blog post"""
+    user_id = session['user_id']
+    post = BlogPost.query.get_or_404(post_id)
+    
+    if not request.is_json:
+        return jsonify({'success': False, 'message': 'Request must be JSON'}), 400
+    
+    data = request.get_json()
+    content = data.get('content', '').strip()
+    
+    if not content:
+        return jsonify({'success': False, 'message': 'Comment content is required'}), 400
+    
+    if len(content) > 1000:
+        return jsonify({'success': False, 'message': 'Comment is too long (max 1000 characters)'}), 400
+    
+    try:
+        new_comment = BlogComment(
+            user_id=user_id,
+            post_id=post_id,
+            content=content
+        )
+        db.session.add(new_comment)
+        db.session.commit()
+        
+        # Get updated comment count
+        comment_count = BlogComment.query.filter_by(post_id=post_id).count()
+        
+        # Get user info for response
+        user = User.query.get(user_id)
+        
+        return jsonify({
+            'success': True,
+            'comment': {
+                'id': new_comment.id,
+                'content': new_comment.content,
+                'author_name': user.name,
+                'created_at': new_comment.created_at.strftime('%B %d, %Y • %I:%M %p')
+            },
+            'comment_count': comment_count
+        })
+        
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        logger.error(f"Error adding comment to post {post_id}: {e}")
+        return jsonify({'success': False, 'message': 'Failed to add comment'}), 500
 
 
 # --- PATIENT JOURNAL ROUTES ---
@@ -3549,12 +3346,41 @@ def upload_voice():
         return jsonify({'success': False, 'message': f'Upload failed: {str(e)}'}), 500
 
 
+import speech_recognition as sr
+
+def transcribe_audio(file_path):
+    r = sr.Recognizer()
+    with sr.AudioFile(file_path) as source:
+        audio = r.record(source)
+    try:
+        return r.recognize_google(audio)
+    except sr.UnknownValueError:
+        return ""
+    except sr.RequestError as e:
+        logger.error(f"Could not request results from Google Speech Recognition service; {e}")
+        return ""
+
 def get_ai_voice_emotion_analysis(file_path, audio_features):
+    # Initialize lemmatizer
+    lemmatizer = WordNetLemmatizer()
+
+    transcribed_text = transcribe_audio(file_path)
+
+    # Lemmatize the text
+    if transcribed_text:
+        tokens = word_tokenize(transcribed_text)
+        lemmatized_text = ' '.join([lemmatizer.lemmatize(word) for word in tokens])
+    else:
+        lemmatized_text = ""
+
     """Get AI-powered emotion analysis for voice recordings with optimized prompts."""
     try:
         # Enhanced prompt with better structure and audio features
         prompt = f"""
         You are Dr. Anya, an AI wellness coach analyzing voice recordings for emotional insights.
+
+                TRANSCRIBED & LEMMATIZED TEXT:
+        {lemmatized_text}
 
         AUDIO ANALYSIS:
         Duration: {audio_features.get('duration', 0):.1f}s
@@ -3777,99 +3603,6 @@ def on_leave(data):
     emit('_disconnect', to=room, include_self=False)
     emit('message', f'User has left the room {room}.', to=room)
 
-# --- SocketIO Video Call Handlers ---
-@socketio.on('join_call')
-def on_join_call(data):
-    """Join a video call room"""
-    call_id = data['call_id']
-    room = f"call_{call_id}"
-    join_room(room)
-    
-    emit('user_joined', {
-        'user_id': session['user_id'],
-        'user_name': session['user_name'],
-        'user_role': session['user_role']
-    }, to=room, include_self=False)
-    
-    emit('joined_call', {'call_id': call_id, 'room': room})
-
-@socketio.on('leave_call')
-def on_leave_call(data):
-    """Leave a video call room"""
-    call_id = data['call_id']
-    room = f"call_{call_id}"
-    leave_room(room)
-    
-    emit('user_left', {
-        'user_id': session['user_id'],
-        'user_name': session['user_name']
-    }, to=room)
-
-@socketio.on('call_offer')
-def on_call_offer(data):
-    """Handle WebRTC offer"""
-    call_id = data['call_id']
-    room = f"call_{call_id}"
-    
-    emit('call_offer', {
-        'offer': data['offer'],
-        'from_user': session['user_id']
-    }, to=room, include_self=False)
-
-@socketio.on('call_answer')
-def on_call_answer(data):
-    """Handle WebRTC answer"""
-    call_id = data['call_id']
-    room = f"call_{call_id}"
-    
-    emit('call_answer', {
-        'answer': data['answer'],
-        'from_user': session['user_id']
-    }, to=room, include_self=False)
-
-@socketio.on('ice_candidate')
-def on_ice_candidate(data):
-    """Handle ICE candidates"""
-    call_id = data['call_id']
-    room = f"call_{call_id}"
-    
-    emit('ice_candidate', {
-        'candidate': data['candidate'],
-        'from_user': session['user_id']
-    }, to=room, include_self=False)
-
-@socketio.on('end_call')
-def on_end_call(data):
-    """Handle call termination"""
-    call_id = data['call_id']
-    room = f"call_{call_id}"
-    
-    # Update VideoCall record
-    try:
-        video_call = VideoCall.query.filter_by(call_id=call_id).first()
-        if video_call and video_call.status == 'answered':
-            video_call.status = 'ended'
-            video_call.ended_at = datetime.utcnow()
-            video_call.ended_by = session.get('user_role', 'unknown')
-            video_call.end_reason = 'user_ended'
-            
-            # Calculate duration if call was answered
-            if video_call.answered_at:
-                duration = video_call.ended_at - video_call.answered_at
-                video_call.duration_seconds = int(duration.total_seconds())
-            
-            db.session.commit()
-    except Exception as e:
-        logger.error(f"Error updating call record on end: {e}")
-        db.session.rollback()
-    
-    emit('call_ended', {
-        'ended_by': session['user_id'],
-        'ended_by_name': session['user_name']
-    }, to=room, include_self=False)
-    
-    leave_room(room)
-
 # Google OAuth Configuration
 app.config["GOOGLE_OAUTH_CLIENT_ID"] = os.environ.get("GOOGLE_OAUTH_CLIENT_ID")
 app.config["GOOGLE_OAUTH_CLIENT_SECRET"] = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET")
@@ -4032,12 +3765,24 @@ def save_role():
         return redirect(url_for('role_selection'))
 
 if __name__ == '__main__':
+    import signal
+    import sys
+    
+    def signal_handler(sig, frame):
+        print("\nINFO - Received interrupt signal (Ctrl+C)")
+        print("INFO - Shutting down MindFullHorizon server gracefully...")
+        sys.exit(0)
+    
+    # Register signal handler for graceful shutdown
+    signal.signal(signal.SIGINT, signal_handler)
+    
     try:
         print("INFO - ==================================================")
         print("INFO - Starting MindFullHorizon server...")
         print(f"INFO - Server available at: http://localhost:5000")
         print("INFO - Debug mode: True")
         print("INFO - CSRF Protection: Enabled")
+        print("INFO - Press Ctrl+C to stop the server")
         print("INFO - ==================================================")
 
         # SocketIO server for real-time features
@@ -4046,5 +3791,10 @@ if __name__ == '__main__':
         use_reloader = False if os.name == 'nt' else True
         socketio.run(app, host='127.0.0.1', port=5000, debug=True, use_reloader=use_reloader)
 
+    except KeyboardInterrupt:
+        print("\nINFO - Server interrupted by user (Ctrl+C)")
+        print("INFO - Shutting down gracefully...")
+        sys.exit(0)
     except Exception as e:
         print(f"ERROR - Failed to start server: {e}")
+        sys.exit(1)
